@@ -1,0 +1,14 @@
+[Unit]
+Description=shadowsocks service
+Wants=network.target
+Before=network.target network.service
+
+[Service]
+Type=simple
+WorkingDirectory= CURDIR
+#ExecStartPre=chdir CURDIR
+ExecStart=/usr/bin/python ./shadowsocks/CURMOD -c ./config.json 2>/dev/null 1>/dev/null
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
