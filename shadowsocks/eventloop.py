@@ -145,6 +145,7 @@ class SelectLoop(object):
 
 class EventLoop(object):
     def __init__(self):
+        #依据不同的系统选择不同的fd复用方式
         if hasattr(select, 'epoll'):
             self._impl = select.epoll()
             model = 'epoll'
@@ -163,10 +164,12 @@ class EventLoop(object):
         self._stopping = False
         logging.debug('using event model: %s', model)
 
+    #对注册的fd进行poll,对发生事件的fd进行分类
     def poll(self, timeout=None):
         events = self._impl.poll(timeout)
         return [(self._fdmap[fd][0], fd, event) for fd, event in events]
 
+    #fd注册函数，注册fd的回调函数
     def add(self, f, mode, handler):
         fd = f.fileno()
         self._fdmap[fd] = (f, handler)
@@ -190,11 +193,13 @@ class EventLoop(object):
     def stop(self):
         self._stopping = True
 
+    #这个函数是shadowsocks的整体框架
     def run(self):
         events = []
         while not self._stopping:
             asap = False
             try:
+                #收集发生的事件
                 events = self.poll(TIMEOUT_PRECISION)
             except (OSError, IOError) as e:
                 if errno_from_exception(e) in (errno.EPIPE, errno.EINTR):
@@ -208,6 +213,8 @@ class EventLoop(object):
                     traceback.print_exc()
                     continue
 
+            #对发生的事件，调用注册在fdmap中的handle,handle对象的handle_event函数将被
+            #调用
             for sock, fd, event in events:
                 handler = self._fdmap.get(fd, None)
                 if handler is not None:
@@ -218,6 +225,7 @@ class EventLoop(object):
                         shell.print_exception(e)
             now = time.time()
             if asap or now - self._last_time >= TIMEOUT_PRECISION:
+                #做周期性的维护工作
                 for callback in self._periodic_callbacks:
                     callback()
                 self._last_time = now

@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 #
 # Copyright 2012-2015 clowwindy
 #
@@ -33,6 +34,7 @@ METHOD_INFO_KEY_LEN = 0
 METHOD_INFO_IV_LEN = 1
 METHOD_INFO_CRYPTO = 2
 
+#注册支持的加密方式
 method_supported = {}
 method_supported.update(rc4_md5.ciphers)
 method_supported.update(openssl.ciphers)
@@ -103,6 +105,7 @@ class Cryptor(object):
             logging.error('method %s not supported' % method)
             sys.exit(1)
 
+    #给定加密方式，获取加密对象
     @staticmethod
     def get_method_info(method):
         method = method.lower()

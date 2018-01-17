@@ -250,6 +250,7 @@ class DNSResolver(object):
 
     def __init__(self, server_list=None, prefer_ipv6=False):
         self._loop = None
+        #记录/etc/hosts中已定义的本地dns名称
         self._hosts = {}
         self._hostname_status = {}
         self._hostname_to_cb = {}
@@ -257,6 +258,7 @@ class DNSResolver(object):
         self._cache = lru_cache.LRUCache(timeout=300)
         self._sock = None
         if server_list is None:
+            #记录dns服务器地址（来源于/etc/resolv.conf)
             self._servers = None
             self._parse_resolv()
         else:
@@ -264,6 +266,7 @@ class DNSResolver(object):
         if prefer_ipv6:
             self._QTYPES = [QTYPE_AAAA, QTYPE_A]
         else:
+            #优先选择ipv4地址
             self._QTYPES = [QTYPE_A, QTYPE_AAAA]
         self._parse_hosts()
         # TODO monitor hosts change and reload hosts
@@ -278,11 +281,12 @@ class DNSResolver(object):
                     line = line.strip()
                     if not (line and line.startswith(b'nameserver')):
                         continue
-
+                    #在resolv.conf中找到一行数据，且此行以nameserver开头
+                    #将此行数据按‘ ’划分，接受两项接果
                     parts = line.split()
                     if len(parts) < 2:
                         continue
-
+                    #添加dns服务器地址
                     server = parts[1]
                     if common.is_ip(server) == socket.AF_INET:
                         if type(server) != str:
@@ -291,9 +295,11 @@ class DNSResolver(object):
         except IOError:
             pass
         if not self._servers:
+            #如果未在resolv.conf中发现有效地址，则使用google dns地址
             self._servers = ['8.8.4.4', '8.8.8.8']
 
     def _parse_hosts(self):
+        #取hosts配置
         etc_path = '/etc/hosts'
         if 'WINDIR' in os.environ:
             etc_path = os.environ['WINDIR'] + '/system32/drivers/etc/hosts'

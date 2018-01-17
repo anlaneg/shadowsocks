@@ -27,7 +27,7 @@ from shadowsocks import common, shell
 
 # this module is ported from ShadowVPN daemon.c
 
-
+#依据daemon的配置来启动停止进程
 def daemon_exec(config):
     if 'daemon' in config:
         if os.name != 'posix':
@@ -49,7 +49,7 @@ def daemon_exec(config):
         else:
             raise Exception('unsupported daemon command %s' % command)
 
-
+#写Pid文件
 def write_pid_file(pid_file, pid):
     import fcntl
     import stat
@@ -60,6 +60,7 @@ def write_pid_file(pid_file, pid):
     except OSError as e:
         shell.print_exception(e)
         return -1
+    #指明clone时关闭
     flags = fcntl.fcntl(fd, fcntl.F_GETFD)
     assert flags != -1
     flags |= fcntl.FD_CLOEXEC
@@ -68,6 +69,7 @@ def write_pid_file(pid_file, pid):
     # There is no platform independent way to implement fcntl(fd, F_SETLK, &fl)
     # via fcntl.fcntl. So use lockf instead
     try:
+        #尝试对文件进行加锁
         fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB, 0, 0, os.SEEK_SET)
     except IOError:
         r = os.read(fd, 32)
@@ -77,11 +79,12 @@ def write_pid_file(pid_file, pid):
             logging.error('already started')
         os.close(fd)
         return -1
+    #写入自已的pid
     os.ftruncate(fd, 0)
     os.write(fd, common.to_bytes(str(pid)))
     return 0
 
-
+#打开文件f,并将其映射到stream上
 def freopen(f, mode, stream):
     oldf = open(f, mode)
     oldfd = oldf.fileno()
@@ -89,7 +92,7 @@ def freopen(f, mode, stream):
     os.close(newfd)
     os.dup2(oldfd, newfd)
 
-
+#deamon式启动
 def daemon_start(pid_file, log_file):
 
     def handle_exit(signum, _):
@@ -113,6 +116,7 @@ def daemon_start(pid_file, log_file):
     ppid = os.getppid()
     pid = os.getpid()
     if write_pid_file(pid_file, pid) != 0:
+        #写pid文件失败，保证单一实例
         os.kill(ppid, signal.SIGINT)
         sys.exit(1)
 
@@ -124,6 +128,7 @@ def daemon_start(pid_file, log_file):
 
     sys.stdin.close()
     try:
+        #使stdout,stderr映射到log_file
         freopen(log_file, 'a', sys.stdout)
         freopen(log_file, 'a', sys.stderr)
     except IOError as e:
@@ -134,6 +139,7 @@ def daemon_start(pid_file, log_file):
 def daemon_stop(pid_file):
     import errno
     try:
+        #通过pid文件获得进程号
         with open(pid_file) as f:
             buf = f.read()
             pid = common.to_str(buf)
@@ -149,6 +155,7 @@ def daemon_stop(pid_file):
     pid = int(pid)
     if pid > 0:
         try:
+            #向进程发送信号，杀死进程
             os.kill(pid, signal.SIGTERM)
         except OSError as e:
             if e.errno == errno.ESRCH:
@@ -164,6 +171,7 @@ def daemon_stop(pid_file):
     for i in range(0, 200):
         try:
             # query for the pid
+            #检查pid是否仍存在，0时，不发信号，但检查
             os.kill(pid, 0)
         except OSError as e:
             if e.errno == errno.ESRCH:

@@ -35,7 +35,7 @@ VERBOSE_LEVEL = 5
 
 verbose = 0
 
-
+#当前版本支持>=2.6 如果是3版本，则要求>=3.3
 def check_python():
     info = sys.version_info
     if info[0] == 2 and not info[1] >= 6:
@@ -109,7 +109,7 @@ def print_shadowsocks():
         pass
     print('Shadowsocks %s' % version)
 
-
+#在当前目录查找'config.json'如果没有找到，在上层目录查找，找到返回对应路径，否则返回None
 def find_config():
     config_path = 'config.json'
     if os.path.exists(config_path):
@@ -127,6 +127,7 @@ def check_config(config, is_local):
 
     if is_local:
         if config.get('server', None) is None:
+            #server必须配置
             logging.error('server addr not specified')
             print_local_help()
             sys.exit(2)
@@ -134,6 +135,7 @@ def check_config(config, is_local):
             config['server'] = to_str(config['server'])
 
         if config.get('tunnel_remote', None) is None:
+            #tunnel_remote必须指定
             logging.error('tunnel_remote addr not specified')
             print_local_help()
             sys.exit(2)
@@ -149,6 +151,7 @@ def check_config(config, is_local):
             sys.exit(2)
 
     if is_local and not config.get('password', None):
+        #password需要配置
         logging.error('password not specified')
         print_help(is_local)
         sys.exit(2)
@@ -194,6 +197,7 @@ def check_config(config, is_local):
         sys.exit(1)
     if config.get('user', None) is not None:
         if os.name != 'posix':
+            #只支持posix
             logging.error('user can be used only on Unix')
             sys.exit(1)
     if config.get('dns_server', None) is not None:
@@ -210,7 +214,7 @@ def check_config(config, is_local):
     cryptor.try_cipher(config['password'], config['method'],
                        config['crypto_path'])
 
-
+#is_local用于区分当前是采用local还是server方式获取配置文件
 def get_config(is_local):
     global verbose
 
@@ -227,15 +231,18 @@ def get_config(is_local):
                     'libopenssl=', 'libmbedtls=', 'libsodium=', 'prefer-ipv6']
     try:
         config_path = find_config()
+        #解析参数
         optlist, args = getopt.getopt(sys.argv[1:], shortopts, longopts)
         for key, value in optlist:
             if key == '-c':
+                #参数指定配置文件路径
                 config_path = value
 
         if config_path:
             logging.info('loading config from %s' % config_path)
             with open(config_path, 'rb') as f:
                 try:
+                    #加载json格式的配置文件
                     config = parse_json_in_str(f.read().decode('utf8'))
                 except ValueError as e:
                     logging.error('found an error in config.json: %s',
@@ -246,6 +253,7 @@ def get_config(is_local):
 
         v_count = 0
         for key, value in optlist:
+            #如果参数有指定，则参数指定的overwirte配置
             if key == '-p':
                 config['server_port'] = int(value)
             elif key == '-k':
@@ -283,6 +291,7 @@ def get_config(is_local):
             elif key == '--forbidden-ip':
                 config['forbidden_ip'] = to_str(value).split(',')
             elif key in ('-h', '--help'):
+                #区分执行local,server的help信息
                 if is_local:
                     print_local_help()
                 else:
@@ -303,15 +312,18 @@ def get_config(is_local):
             elif key == '--prefer-ipv6':
                 config['prefer_ipv6'] = True
     except getopt.GetoptError as e:
+        #配置有误
         print(e, file=sys.stderr)
         print_help(is_local)
         sys.exit(2)
 
     if not config:
+        #未发现配置，报错
         logging.error('config not specified')
         print_help(is_local)
         sys.exit(2)
 
+    #默认配置（帮助用户补全配置）
     config['password'] = to_bytes(config.get('password', b''))
     config['method'] = to_str(config.get('method', 'aes-256-cfb'))
     config['port_password'] = config.get('port_password', None)
@@ -335,6 +347,7 @@ def get_config(is_local):
     config['tunnel_remote_port'] = config.get('tunnel_remote_port', 53)
     config['tunnel_port'] = config.get('tunnel_port', 53)
 
+    #初始化log
     logging.getLogger('').handlers = []
     logging.addLevelName(VERBOSE_LEVEL, 'VERBOSE')
     if config['verbose'] >= 2:
@@ -352,6 +365,7 @@ def get_config(is_local):
                         format='%(asctime)s %(levelname)-8s %(message)s',
                         datefmt='%Y-%m-%d %H:%M:%S')
 
+    #配置检查失败后，将自此处退出
     check_config(config, is_local)
 
     return config
@@ -363,7 +377,7 @@ def print_help(is_local):
     else:
         print_server_help()
 
-
+#local帮助信息
 def print_local_help():
     print('''usage: sslocal [OPTION]...
 A fast tunnel proxy that helps you bypass firewalls.
@@ -503,7 +517,7 @@ def _decode_dict(data):
         rv[key] = value
     return rv
 
-
+#加载json格式的配置文件
 def parse_json_in_str(data):
     # parse json and convert everything from unicode to str
     return json.loads(data, object_hook=_decode_dict)

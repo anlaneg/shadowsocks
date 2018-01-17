@@ -38,8 +38,10 @@ def main():
         os.chdir(p)
 
     config = shell.get_config(True)
+    #依据配置创建相应的daemon(比较简单，支持通过pid文件进行重启等操作）
     daemon.daemon_exec(config)
 
+    #显示监听及监听的端口
     logging.info("starting local at %s:%d" %
                  (config['local_address'], config['local_port']))
 

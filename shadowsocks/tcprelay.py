@@ -146,9 +146,11 @@ class TCPRelayHandler(object):
         self._forbidden_iplist = config.get('forbidden_ip')
         if is_local:
             self._chosen_server = self._get_a_server()
+        #将当前fd的处理注册为TCPRelayHandler类的handle_event来处理
         fd_to_handlers[local_sock.fileno()] = self
         local_sock.setblocking(False)
         local_sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+        #注册客户sock,采用self._server进行处理，统一入口
         loop.add(local_sock, eventloop.POLL_IN | eventloop.POLL_ERR,
                  self._server)
         self.last_activity = 0
@@ -313,7 +315,9 @@ class TCPRelayHandler(object):
                     if self._local_sock.family == socket.AF_INET6:
                         header = b'\x05\x00\x00\x04'
                     else:
+                        #准备ipv4格式的回复头（见https://www.rfc-editor.org/rfc/rfc1928.txt page5)
                         header = b'\x05\x00\x00\x01'
+                    #回复当前的地址及port使其关联
                     addr, port = self._local_sock.getsockname()[:2]
                     addr_to_send = socket.inet_pton(self._local_sock.family,
                                                     addr)
@@ -519,22 +523,61 @@ class TCPRelayHandler(object):
         socks_version = common.ord(data[0])
         nmethods = common.ord(data[1])
         if socks_version != 5:
+            #目前只支持sock5
             logging.warning('unsupported SOCKS protocol version ' +
                             str(socks_version))
             raise BadSocksHeader
         if nmethods < 1 or len(data) != nmethods + 2:
             logging.warning('NMETHODS and number of METHODS mismatch')
             raise BadSocksHeader
+        #检查是否支持不认证
         noauth_exist = False
         for method in data[2:]:
             if common.ord(method) == METHOD_NOAUTH:
                 noauth_exist = True
                 break
         if not noauth_exist:
+            #当前只支持不认证
             logging.warning('none of SOCKS METHOD\'s '
                             'requested by client is supported')
             raise NoAcceptableMethods
 
+    #处理socks5的协商，当前只支持无认证方式
+    """
+   The client connects to the server, and sends a version
+   identifier/method selection message:
+
+                   +----+----------+----------+
+                   |VER | NMETHODS | METHODS  |
+                   +----+----------+----------+
+                   | 1  |    1     | 1 to 255 |
+                   +----+----------+----------+
+
+   The VER field is set to X'05' for this version of the protocol.  The
+   NMETHODS field contains the number of method identifier octets that
+   appear in the METHODS field.
+   
+   The server selects from one of the methods given in METHODS, and
+   sends a METHOD selection message:
+
+                         +----+--------+
+                         |VER | METHOD |
+                         +----+--------+
+                         | 1  |   1    |
+                         +----+--------+
+
+   If the selected METHOD is X'FF', none of the methods listed by the
+   client are acceptable, and the client MUST close the connection.
+
+   The values currently defined for METHOD are:
+
+          o  X'00' NO AUTHENTICATION REQUIRED
+          o  X'01' GSSAPI
+          o  X'02' USERNAME/PASSWORD
+          o  X'03' to X'7F' IANA ASSIGNED
+          o  X'80' to X'FE' RESERVED FOR PRIVATE METHODS
+          o  X'FF' NO ACCEPTABLE METHODS
+    """
     def _handle_stage_init(self, data):
         try:
             self._check_auth_method(data)
@@ -542,10 +585,12 @@ class TCPRelayHandler(object):
             self.destroy()
             return
         except NoAcceptableMethods:
+            #回复0x05 0xff
             self._write_to_sock(b'\x05\xff', self._local_sock)
             self.destroy()
             return
 
+        #回复0x5 0x00表示，要求无认证方式
         self._write_to_sock(b'\x05\00', self._local_sock)
         self._stage = STAGE_ADDR
 
@@ -561,6 +606,7 @@ class TCPRelayHandler(object):
         else:
             buf_size = DOWN_STREAM_BUF_SIZE
         try:
+            #收取数据
             data = self._local_sock.recv(buf_size)
         except (OSError, IOError) as e:
             if eventloop.errno_from_exception(e) in \
@@ -571,10 +617,14 @@ class TCPRelayHandler(object):
             return
         self._update_activity(len(data))
         if not is_local:
+            #对数据进行解密
             data = self._cryptor.decrypt(data)
             if not data:
                 return
+            
+        #依据当前阶段进行处理
         if self._stage == STAGE_STREAM:
+            #数据处理
             self._handle_stage_stream(data)
             return
         elif is_local and self._stage == STAGE_INIT:
@@ -749,17 +799,20 @@ class TCPRelay(object):
             raise Exception("can't get addrinfo for %s:%d" %
                             (listen_addr, listen_port))
         af, socktype, proto, canonname, sa = addrs[0]
+        #创建socket
         server_socket = socket.socket(af, socktype, proto)
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_socket.bind(sa)
+        server_socket.bind(sa) #绑定源地址
         server_socket.setblocking(False)
         if config['fast_open']:
             try:
+                #define SO_SECURITY_ENCRYPTION_TRANSPORT    23
                 server_socket.setsockopt(socket.SOL_TCP, 23, 5)
             except socket.error:
                 logging.error('warning: fast open is not available')
                 self._config['fast_open'] = False
         server_socket.listen(1024)
+        #设置tcprelay对应的fd
         self._server_socket = server_socket
         self._stat_callback = stat_callback
 
@@ -769,8 +822,10 @@ class TCPRelay(object):
         if self._closed:
             raise Exception('already closed')
         self._eventloop = loop
+        #tcprelay将自已加入到eventloop中，关注两个事件 读与错误
         self._eventloop.add(self._server_socket,
                             eventloop.POLL_IN | eventloop.POLL_ERR, self)
+        #tcprelay注册周期性维护任务处理
         self._eventloop.add_periodic(self.handle_periodic)
 
     def remove_handler(self, handler):
@@ -833,6 +888,7 @@ class TCPRelay(object):
             self._timeout_offset = pos
 
     def handle_event(self, sock, fd, event):
+        #tcprelay事件处理函数，负责读取fd并转发给server
         # handle events and dispatch to handlers
         if sock:
             logging.log(shell.VERBOSE_LEVEL, 'fd %d %s', fd,
@@ -843,6 +899,7 @@ class TCPRelay(object):
                 raise Exception('server_socket error')
             try:
                 logging.debug('accept')
+                #server fd接入一个连接，创建此连接
                 conn = self._server_socket.accept()
                 TCPRelayHandler(self, self._fd_to_handlers,
                                 self._eventloop, conn[0], self._config,
@@ -857,6 +914,7 @@ class TCPRelay(object):
                     if self._config['verbose']:
                         traceback.print_exc()
         else:
+            #已接入的连接，处理此连接对应的读事件
             if sock:
                 handler = self._fd_to_handlers.get(fd, None)
                 if handler:
@@ -864,6 +922,7 @@ class TCPRelay(object):
             else:
                 logging.warn('poll removed fd')
 
+    #处理周期性事务
     def handle_periodic(self):
         if self._closed:
             if self._server_socket:
