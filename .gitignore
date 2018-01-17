@@ -41,5 +41,8 @@ venv/
 # Pycharm
 .idea
 
+.project
+.pydevproject
+.settings/
 #ss
 config.json
