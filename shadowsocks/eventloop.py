@@ -54,6 +54,7 @@ EVENT_NAMES = {
 }
 
 # we check timeouts every TIMEOUT_PRECISION seconds
+#每10S执行一次周期性回调
 TIMEOUT_PRECISION = 10
 
 
@@ -142,12 +143,12 @@ class SelectLoop(object):
     def close(self):
         pass
 
-
+#实现事件驱动机制
 class EventLoop(object):
     def __init__(self):
         #依据不同的系统选择不同的fd复用方式
         if hasattr(select, 'epoll'):
-            self._impl = select.epoll()
+            self._impl = select.epoll() #epoll机制
             model = 'epoll'
         elif hasattr(select, 'kqueue'):
             self._impl = KqueueLoop()
@@ -166,13 +167,17 @@ class EventLoop(object):
 
     #对注册的fd进行poll,对发生事件的fd进行分类
     def poll(self, timeout=None):
+        #底层的实现事件监测
         events = self._impl.poll(timeout)
+        #返回所有事件，及其对应的回调
         return [(self._fdmap[fd][0], fd, event) for fd, event in events]
 
     #fd注册函数，注册fd的回调函数
     def add(self, f, mode, handler):
         fd = f.fileno()
+        #设置此fd对应的f及处理函数
         self._fdmap[fd] = (f, handler)
+        #注册给底层的实现
         self._impl.register(fd, mode)
 
     def remove(self, f):
@@ -213,6 +218,7 @@ class EventLoop(object):
                     traceback.print_exc()
                     continue
 
+            #触发回调
             #对发生的事件，调用注册在fdmap中的handle,handle对象的handle_event函数将被
             #调用
             for sock, fd, event in events:
@@ -220,6 +226,7 @@ class EventLoop(object):
                 if handler is not None:
                     handler = handler[1]
                     try:
+                        #回调执行，所有handler中的handle_event函数将被执行
                         handler.handle_event(sock, fd, event)
                     except (OSError, IOError) as e:
                         shell.print_exception(e)

@@ -85,7 +85,7 @@ def build_address(address):
     results.append(b'\0')
     return b''.join(results)
 
-
+#构造请求报文
 def build_request(address, qtype):
     request_id = os.urandom(2)
     header = struct.pack('!BBHHHH', 1, 0, 1, 0, 0, 0)
@@ -163,31 +163,53 @@ def parse_record(data, offset, question=False):
         )
         return nlen + 4, (name, None, record_type, record_class, None, None)
 
-
+#解析dns数据头
 def parse_header(data):
     if len(data) >= 12:
         header = struct.unpack('!HBBHHHH', data[:12])
+        #ID: 2个字节(16bit)，标识字段，客户端会解析服务器返回的DNS应答报文，
+        #获取ID值与请求报文设置的ID值做比较，如果相同，则认为是同一个DNS会话
         res_id = header[0]
+        #后面的两个字节（BB）是flags
+        #QR: 0表示查询报文，1表示响应报文;
         res_qr = header[1] & 128
+        # TC 截断(TrunCation) - 用来指出报文比允许的长度还要长，导致被截断。
         res_tc = header[1] & 2
+        # RA      支持递归(Recursion Available) - 这个比特位在应答中设置
+        # 或取消，用来代表服务器是否支持递归查询。
         res_ra = header[2] & 128
+        #RCODE   应答码(Response code) - 这4个比特位在应答报文中设置，代表的含义如下：
+        #        0               没有错误。
+        #        1               报文格式错误(Format error) - 服务器不能理解请求的报文。
+        #        2               服务器失败(Server failure) - 因为服务器的原因导致没办法处理这个请求。
+        #        3               名字错误(Name Error) - 只有对授权域名解析服务器有意义，指出解析的域名不存在。
+        #        4               没有实现(Not Implemented) - 域名服务器不支持查询类型。
+        #        5               拒绝(Refused) - 服务器由于设置的策略拒绝给出应答。比如，服务器不希望对某些请求者给出应答，
+        #                        或者服务器不希望进行某些操作（比如区域传送zone transfer）。
+        #        6-15            保留值，暂时未使用。
         res_rcode = header[2] & 15
         # assert res_tc == 0
         # assert res_rcode in [0, 3]
+        # QDCOUNT 无符号16位整数表示报文请求段中的问题记录数。
         res_qdcount = header[3]
+        # ANCOUNT 无符号16位整数表示报文回答段中的回答记录数。
         res_ancount = header[4]
+        # NSCOUNT 无符号16位整数表示报文授权段中的授权记录数。
         res_nscount = header[5]
+        # ARCOUNT 无符号16位整数表示报文附加段中的附加记录数。
         res_arcount = header[6]
         return (res_id, res_qr, res_tc, res_ra, res_rcode, res_qdcount,
                 res_ancount, res_nscount, res_arcount)
     return None
 
 
+#解析dns响应报文
 def parse_response(data):
     try:
         if len(data) >= 12:
             header = parse_header(data)
             if not header:
+                #解析失败
                 return None
             res_id, res_qr, res_tc, res_ra, res_rcode, res_qdcount, \
                 res_ancount, res_nscount, res_arcount = header
@@ -195,19 +217,23 @@ def parse_response(data):
             qds = []
             ans = []
             offset = 12
+            #遍历请求段中的所有问题
             for i in range(0, res_qdcount):
                 l, r = parse_record(data, offset, True)
                 offset += l
                 if r:
                     qds.append(r)
+            #遍历响应段的所有回答
             for i in range(0, res_ancount):
                 l, r = parse_record(data, offset)
                 offset += l
                 if r:
                     ans.append(r)
+            #遍历所有ns回答
             for i in range(0, res_nscount):
                 l, r = parse_record(data, offset)
                 offset += l
+            #遍历所有权威记录
             for i in range(0, res_arcount):
                 l, r = parse_record(data, offset)
                 offset += l
@@ -262,8 +288,10 @@ class DNSResolver(object):
             self._servers = None
             self._parse_resolv()
         else:
+            #用户指定了dns server地址（数组类型）
             self._servers = server_list
         if prefer_ipv6:
+            #如果优先选择ipv6地址，则将地址类型更改为4A记录
             self._QTYPES = [QTYPE_AAAA, QTYPE_A]
         else:
             #优先选择ipv4地址
@@ -272,6 +300,7 @@ class DNSResolver(object):
         # TODO monitor hosts change and reload hosts
         # TODO parse /etc/gai.conf and follow its rules
 
+    #设置dns server地址
     def _parse_resolv(self):
         self._servers = []
         try:
@@ -282,7 +311,7 @@ class DNSResolver(object):
                     if not (line and line.startswith(b'nameserver')):
                         continue
                     #在resolv.conf中找到一行数据，且此行以nameserver开头
-                    #将此行数据按‘ ’划分，接受两项接果
+                    #将此行数据按‘ ’划分，接受两项分隔结果
                     parts = line.split()
                     if len(parts) < 2:
                         continue
@@ -298,6 +327,7 @@ class DNSResolver(object):
             #如果未在resolv.conf中发现有效地址，则使用google dns地址
             self._servers = ['8.8.4.4', '8.8.8.8']
 
+    #通过解析/etc/hosts得用户配置的主机名称
     def _parse_hosts(self):
         #取hosts配置
         etc_path = '/etc/hosts'
@@ -309,30 +339,37 @@ class DNSResolver(object):
                     line = line.strip()
                     parts = line.split()
                     if len(parts) < 2:
-                        continue
+                        continue #小于两项的不考虑
 
                     ip = parts[0]
                     if not common.is_ip(ip):
-                        continue
+                        continue #非ip地址的不考虑
 
+                    #记录hostname对应的主机的ip地址
                     for i in range(1, len(parts)):
                         hostname = parts[i]
                         if hostname:
                             self._hosts[hostname] = ip
         except IOError:
+            #填写localhost主机为127.0.0.1
             self._hosts['localhost'] = '127.0.0.1'
 
+    #将自身注册至loop中
     def add_to_loop(self, loop):
         if self._loop:
             raise Exception('already add to loop')
         self._loop = loop
         # TODO when dns server is IPv6
+        # 开一个udp socket,设置为非阻塞
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM,
                                    socket.SOL_UDP)
         self._sock.setblocking(False)
+        
+        #在loop中注册自已的socket,注册周期性事务
         loop.add(self._sock, eventloop.POLL_IN, self)
         loop.add_periodic(self.handle_periodic)
 
+    #拿到ip，或者没有拿到ip时，执行此回调
     def _call_callback(self, hostname, ip, error=None):
         callbacks = self._hostname_to_cb.get(hostname, [])
         for callback in callbacks:
@@ -348,6 +385,7 @@ class DNSResolver(object):
         if hostname in self._hostname_status:
             del self._hostname_status[hostname]
 
+    #处理dns响应
     def _handle_data(self, data):
         response = parse_response(data)
         if response and response.hostname:
@@ -356,27 +394,34 @@ class DNSResolver(object):
             for answer in response.answers:
                 if answer[1] in (QTYPE_A, QTYPE_AAAA) and \
                         answer[2] == QCLASS_IN:
-                    ip = answer[0]
+                    ip = answer[0] #返回ip地址
                     break
             if not ip and self._hostname_status.get(hostname, STATUS_SECOND) \
                     == STATUS_FIRST:
+                #没有找到ip地址，且为首次请求，则请求下一类型（a记录，4a记录）
                 self._hostname_status[hostname] = STATUS_SECOND
                 self._send_req(hostname, self._QTYPES[1])
             else:
                 if ip:
+                    #请求到ip,将ip加入到缓存中
                     self._cache[hostname] = ip
+                    #执行拿到ip地址的回调
                     self._call_callback(hostname, ip)
                 elif self._hostname_status.get(hostname, None) \
                         == STATUS_SECOND:
+                    #发送了两次请求，仍没有拿到ip地址
                     for question in response.questions:
                         if question[1] == self._QTYPES[1]:
+                            #执行没有拿到ip地址的回调
                             self._call_callback(hostname, None)
                             break
 
+    #sock有数据来
     def handle_event(self, sock, fd, event):
         if sock != self._sock:
-            return
+            return #非自身socket,可能存在bug，不处理
         if event & eventloop.POLL_ERR:
+            #socket发生错误，重新打开socket
             logging.error('dns socket err')
             self._loop.remove(self._sock)
             self._sock.close()
@@ -386,7 +431,9 @@ class DNSResolver(object):
             self._sock.setblocking(False)
             self._loop.add(self._sock, eventloop.POLL_IN, self)
         else:
+            #自socket中读取数据
             data, addr = sock.recvfrom(1024)
+            #收到非指定server的报文，丢弃
             if addr[0] not in self._servers:
                 logging.warn('received a packet other than our dns')
                 return
@@ -407,7 +454,9 @@ class DNSResolver(object):
                     if hostname in self._hostname_status:
                         del self._hostname_status[hostname]
 
+    #发送dns请求
     def _send_req(self, hostname, qtype):
+        #构造请求，并发送，给server的53号端口
         req = build_request(hostname, qtype)
         for server in self._servers:
             logging.debug('resolving %s with type %d using server %s',
