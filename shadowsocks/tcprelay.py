@@ -126,7 +126,7 @@ class TCPRelayHandler(object):
 
         # TCP Relay works as either sslocal or ssserver
         # if is_local, this is sslocal
-        # 标记是否为sslocal
+        # 标记是否为sslocal,如果此值为False，则为ssserver
         self._is_local = is_local
         self._stage = STAGE_INIT
         self._cryptor = cryptor.Cryptor(config['password'],
@@ -174,6 +174,7 @@ class TCPRelayHandler(object):
         server = self._config['server']
         server_port = self._config['server_port']
         if type(server_port) == list:
+            #支持对外公开多个port
             server_port = random.choice(server_port)
         if type(server) == list:
             server = random.choice(server)
@@ -341,7 +342,6 @@ class TCPRelayHandler(object):
                     logging.error('unknown command %d', cmd)
                     self.destroy()
                     return
-        #解析connect命令头
         header_result = parse_header(data)
         if header_result is None:
             raise Exception('can not parse header')
@@ -350,15 +350,19 @@ class TCPRelayHandler(object):
                      (common.to_str(remote_addr), remote_port,
                       self._client_address[0], self._client_address[1]))
         if self._is_local is False:
+            # 服务器端处理
             # spec https://shadowsocks.org/en/spec/one-time-auth.html
             self._ota_enable_session = addrtype & ADDRTYPE_AUTH
             if self._ota_enable and not self._ota_enable_session:
+                #如果需要ota,且报文中未指明ota enable，则丢包
                 logging.warn('client one time auth is required')
                 return
             if self._ota_enable_session:
+                #如果开启了ota,但字节不足，丢包
                 if len(data) < header_length + ONETIMEAUTH_BYTES:
                     logging.warn('one time auth header is too short')
                     return None
+                #ota检查
                 offset = header_length + ONETIMEAUTH_BYTES
                 _hash = data[header_length: offset]
                 _data = data[:header_length]
@@ -366,6 +370,7 @@ class TCPRelayHandler(object):
                 if onetimeauth_verify(_hash, _data, key) is False:
                     logging.warn('one time auth fail')
                     self.destroy()
+                    #检查不通过
                     return
                 header_length += ONETIMEAUTH_BYTES
         self._remote_address = (common.to_str(remote_addr), remote_port)
@@ -401,6 +406,7 @@ class TCPRelayHandler(object):
             elif len(data) > header_length:
                 self._data_to_write_to_remote.append(data[header_length:])
             # notice here may go into _handle_dns_resolved directly
+            # 处理dns查询
             self._dns_resolver.resolve(remote_addr,
                                        self._handle_dns_resolved)
 
@@ -625,11 +631,12 @@ class TCPRelayHandler(object):
                     (errno.ETIMEDOUT, errno.EAGAIN, errno.EWOULDBLOCK):
                 return
         if not data:
+            #未接受到数据，说明连接关闭，销毁
             self.destroy()
             return
         self._update_activity(len(data))
         if not is_local:
-            #对数据进行解密(shadowsocket端需要先对数据解密）
+            #服务器端，对数据进行解密
             data = self._cryptor.decrypt(data)
             if not data:
                 return

@@ -167,32 +167,43 @@ def add_header(address, port, data=b''):
     _data = pack_addr(address) + struct.pack('>H', port) + data
     return _data
 
-
+#解析消息头部
 def parse_header(data):
     addrtype = ord(data[0])
     dest_addr = None
     dest_port = None
     header_length = 0
     if addrtype & ADDRTYPE_MASK == ADDRTYPE_IPV4:
+        #ipv4地址情况
+        #第0个字节指出地址类型，第1-4字节指出目的地址，第5-6指出目的端口
+        #共计7个字节
         if len(data) >= 7:
+            #目的地址
             dest_addr = socket.inet_ntoa(data[1:5])
+            #目的端口
             dest_port = struct.unpack('>H', data[5:7])[0]
             header_length = 7
         else:
             logging.warn('header is too short')
     elif addrtype & ADDRTYPE_MASK == ADDRTYPE_HOST:
+        #第0个字节指出地址长度，第2指出目的地址(长$0)，第2+$0指出目的port(长2字节）
         if len(data) > 2:
+            #指出地址长度
             addrlen = ord(data[1])
             if len(data) >= 4 + addrlen:
+                #取目的地址
                 dest_addr = data[2:2 + addrlen]
+                #取目的port(目的地址后两个字节）
                 dest_port = struct.unpack('>H', data[2 + addrlen:4 +
                                                      addrlen])[0]
+                #头部总长
                 header_length = 4 + addrlen
             else:
                 logging.warn('header is too short')
         else:
             logging.warn('header is too short')
     elif addrtype & ADDRTYPE_MASK == ADDRTYPE_IPV6:
+        #ipv6地址情况
         if len(data) >= 19:
             dest_addr = socket.inet_ntop(socket.AF_INET6, data[1:17])
             dest_port = struct.unpack('>H', data[17:19])[0]
@@ -204,6 +215,7 @@ def parse_header(data):
                      'encryption method' % addrtype)
     if dest_addr is None:
         return None
+    #地址类型，目的地址，目的port,头部长度
     return addrtype, to_bytes(dest_addr), dest_port, header_length
 
 
