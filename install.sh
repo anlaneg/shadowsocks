@@ -1,6 +1,22 @@
 #! /bin/bash
 CURDIR="`pwd`"
-INSTALL_DIR="/usr/lib/systemd/system"
+
+function detect_install_dir()
+{
+	user_dir="/usr/lib/systemd/system"
+	lib_dir="/lib/systemd/system"
+	if [ -e "$user_dir" ] ;
+	then
+		echo $user_dir
+	elif [ -e "$lib_dir" ] ;
+	then
+		echo $lib_dir;
+	else
+		echo "unknow";
+	fi;
+}
+
+INSTALL_DIR="`detect_install_dir`"
 
 function gen_file()
 {
