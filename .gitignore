@@ -46,3 +46,4 @@ venv/
 .settings/
 #ss
 config.json
+lab.json
