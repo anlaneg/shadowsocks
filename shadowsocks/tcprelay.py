@@ -218,6 +218,7 @@ class TCPRelayHandler(object):
                 event |= eventloop.POLL_OUT
             self._loop.modify(self._remote_sock, event)
 
+    #将数据自sock中发出
     def _write_to_sock(self, data, sock):
         # write data to sock
         # if only some of the data are written, put remaining in the buffer
@@ -312,6 +313,7 @@ class TCPRelayHandler(object):
                 # add ss header to data
                 tunnel_remote = self.tunnel_remote
                 tunnel_remote_port = self.tunnel_remote_port
+                #知会服务器端，需要连接地址tunnel_remote
                 data = common.add_header(tunnel_remote,
                                          tunnel_remote_port, data)
             else:
@@ -346,9 +348,11 @@ class TCPRelayHandler(object):
         if header_result is None:
             raise Exception('can not parse header')
         addrtype, remote_addr, remote_port, header_length = header_result
+        #接受到sock5客户端希望我们连接到那个地址
         logging.info('connecting %s:%d from %s:%d' %
                      (common.to_str(remote_addr), remote_port,
                       self._client_address[0], self._client_address[1]))
+        
         if self._is_local is False:
             # 服务器端处理
             # spec https://shadowsocks.org/en/spec/one-time-auth.html
@@ -377,10 +381,13 @@ class TCPRelayHandler(object):
         # pause reading
         self._update_stream(STREAM_UP, WAIT_STATUS_WRITING)
         self._stage = STAGE_DNS  #更新为dns阶段
+        
+        #没有看懂，这里local是如可将address转发给remote的？
         if self._is_local:
             # jump over socks5 response
             if not self._is_tunnel:
                 # forward address to remote
+                
                 self._write_to_sock((b'\x05\x00\x00\x01'
                                      b'\x00\x00\x00\x00\x10\x10'),
                                     self._local_sock)
@@ -406,11 +413,12 @@ class TCPRelayHandler(object):
             elif len(data) > header_length:
                 self._data_to_write_to_remote.append(data[header_length:])
             # notice here may go into _handle_dns_resolved directly
-            # 处理dns查询
+            # 进行dns查询
             self._dns_resolver.resolve(remote_addr,
                                        self._handle_dns_resolved)
 
     def _create_remote_socket(self, ip, port):
+        #创建到remote的socket
         addrs = socket.getaddrinfo(ip, port, 0, socket.SOCK_STREAM,
                                    socket.SOL_TCP)
         if len(addrs) == 0:
@@ -420,6 +428,7 @@ class TCPRelayHandler(object):
             if common.to_str(sa[0]) in self._forbidden_iplist:
                 raise Exception('IP %s is in forbidden list, reject' %
                                 common.to_str(sa[0]))
+        #创建tcp socket
         remote_sock = socket.socket(af, socktype, proto)
         self._remote_sock = remote_sock
         self._fd_to_handlers[remote_sock.fileno()] = self
@@ -528,7 +537,7 @@ class TCPRelayHandler(object):
             if self._ota_enable_session:
                 self._ota_chunk_data(data, self._write_to_sock_remote)
             else:
-                #将数据写给远端
+                #将数据自自身的remote_sock扔出，（例如通过tcp socket发起http请求）
                 self._write_to_sock(data, self._remote_sock)
         return
 
@@ -652,13 +661,13 @@ class TCPRelayHandler(object):
                 self._handle_stage_addr(data)
                 return
             else:
-                #处理socket5的初始化阶段，转至addr阶段
+                #处理socket5的初始化阶段（协议协商），转至addr阶段
                 self._handle_stage_init(data)
         elif self._stage == STAGE_CONNECTING:
             self._handle_stage_connecting(data)
         elif (is_local and self._stage == STAGE_ADDR) or \
                 (not is_local and self._stage == STAGE_INIT):
-            #slocal时，且处理addr阶段
+            #local时，且处理addr阶段或者非local且stage_init状态
             self._handle_stage_addr(data)
 
     def _on_remote_read(self):
@@ -723,7 +732,7 @@ class TCPRelayHandler(object):
             logging.error(eventloop.get_sock_error(self._remote_sock))
         self.destroy()
 
-    #此函数负责处理已与local_socket建立起连接
+    #此函数负责处理已与客户端间的连接（含sock5客户端处理）
     @shell.exception_handle(self_=True, destroy=True)
     def handle_event(self, sock, event):
         # handle all events in this handler and dispatch them to methods
@@ -796,6 +805,7 @@ class TCPRelayHandler(object):
 #实现tcp 中继
 class TCPRelay(object):
 
+    #is_local是否为local
     def __init__(self, config, dns_resolver, is_local, stat_callback=None):
         self._config = config
         #标记是否为local端（及主机端起的socket5服务器）
@@ -820,17 +830,20 @@ class TCPRelay(object):
             listen_port = config['server_port']
         self._listen_port = listen_port
 
+        #构造监听的addr及port
         addrs = socket.getaddrinfo(listen_addr, listen_port, 0,
                                    socket.SOCK_STREAM, socket.SOL_TCP)
         if len(addrs) == 0:
             raise Exception("can't get addrinfo for %s:%d" %
                             (listen_addr, listen_port))
         af, socktype, proto, canonname, sa = addrs[0]
+        
         #创建 tcp socket
         server_socket = socket.socket(af, socktype, proto)
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.bind(sa) #绑定源地址
         server_socket.setblocking(False)
+        
         if config['fast_open']:
             try:
                 #define SO_SECURITY_ENCRYPTION_TRANSPORT    23
@@ -839,20 +852,22 @@ class TCPRelay(object):
                 logging.error('warning: fast open is not available')
                 self._config['fast_open'] = False
         server_socket.listen(1024)
+        
         #设置tcprelay对应的fd
         self._server_socket = server_socket
         self._stat_callback = stat_callback
 
+    #注册服务器的in,err并为其注册读，错误事件，及周期事件
     def add_to_loop(self, loop):
         if self._eventloop:
             raise Exception('already add to loop')
         if self._closed:
             raise Exception('already closed')
         self._eventloop = loop
-        #tcprelay将自已加入到eventloop中，关注两个事件 读与错误
+        #tcprelay将handle_event加入到eventloop中，关注两个事件 读与错误
         self._eventloop.add(self._server_socket,
                             eventloop.POLL_IN | eventloop.POLL_ERR, self)
-        #tcprelay注册周期性维护任务处理
+        #tcprelay注册周期性维护任务handle_periodic处理
         self._eventloop.add_periodic(self.handle_periodic)
 
     def remove_handler(self, handler):
@@ -914,6 +929,7 @@ class TCPRelay(object):
                 pos = 0
             self._timeout_offset = pos
 
+    #处理fd的读及error事件
     def handle_event(self, sock, fd, event):
         #tcprelay事件处理函数，负责读取fd并转发给server
         # handle events and dispatch to handlers
@@ -921,14 +937,17 @@ class TCPRelay(object):
             logging.log(shell.VERBOSE_LEVEL, 'fd %d %s', fd,
                         eventloop.EVENT_NAMES.get(event, event))
         if sock == self._server_socket:
+            #当前处理的是server socket
             if event & eventloop.POLL_ERR:
-                # server socket出现错误
+                # server socket出现错误，扔异常
                 raise Exception('server_socket error')
             try:
                 logging.debug('accept')
                 #server fd接入一个连接，创建此连接
                 conn = self._server_socket.accept()
-                #针对此连接，创建一个tcp relay handler
+                
+                #针对此连接，创建一个tcp relay handler，并将其的in,error读事件处理为
+                #本类的handle_event
                 TCPRelayHandler(self, self._fd_to_handlers,
                                 self._eventloop, conn[0], self._config,
                                 self._dns_resolver, self._is_local)
@@ -944,9 +963,10 @@ class TCPRelay(object):
         else:
             #已接入的连接，处理此连接对应的读事件
             if sock:
-                #这里直接使用为此sock注册的TCPRelayHandler进行处理
+                #这里直接使用为此sock注册的TCPRelayHandler类进行处理
                 handler = self._fd_to_handlers.get(fd, None)
                 if handler:
+                    #这里实际调用的是TCPRelayHandler.handle_event处理
                     handler.handle_event(sock, event)
             else:
                 logging.warn('poll removed fd')

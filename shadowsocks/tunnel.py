@@ -29,6 +29,7 @@ from shadowsocks import shell, daemon, eventloop, tcprelay, udprelay, asyncdns
 
 @shell.exception_handle(self_=False, exit_code=1)
 def main():
+    #python版本检查
     shell.check_python()
 
     # fix py2exe

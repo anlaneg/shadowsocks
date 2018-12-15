@@ -153,14 +153,17 @@ class EventLoop(object):
         elif hasattr(select, 'kqueue'):
             self._impl = KqueueLoop()
             model = 'kqueue'
-        elif hasattr(select, 'select'):
+        elif hasattr(select, 'select'): #select机制
             self._impl = SelectLoop()
             model = 'select'
         else:
             raise Exception('can not find any available functions in select '
                             'package')
+        #存储每个fd对应的handler
         self._fdmap = {}  # (f, handler)
+        #上一次执行完周期性事件对应的time
         self._last_time = time.time()
+        #记录周期性回调
         self._periodic_callbacks = []
         self._stopping = False
         logging.debug('using event model: %s', model)
@@ -180,21 +183,26 @@ class EventLoop(object):
         #注册给底层的实现
         self._impl.register(fd, mode)
 
+    #移除fd对应的回调函数
     def remove(self, f):
         fd = f.fileno()
         del self._fdmap[fd]
         self._impl.unregister(fd)
 
+    #添加周期性事件回调
     def add_periodic(self, callback):
         self._periodic_callbacks.append(callback)
 
+    #移除周期性事件回调
     def remove_periodic(self, callback):
         self._periodic_callbacks.remove(callback)
 
+    #修改f对应的注册模式
     def modify(self, f, mode):
         fd = f.fileno()
         self._impl.modify(fd, mode)
 
+    #停止loop
     def stop(self):
         self._stopping = True
 
@@ -230,6 +238,7 @@ class EventLoop(object):
                         handler.handle_event(sock, fd, event)
                     except (OSError, IOError) as e:
                         shell.print_exception(e)
+            #取当前时间，如果时间间隔超过约定，执行所有已注册的周期性
             now = time.time()
             if asap or now - self._last_time >= TIMEOUT_PRECISION:
                 #做周期性的维护工作
